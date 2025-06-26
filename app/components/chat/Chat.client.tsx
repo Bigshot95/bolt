@@ -27,6 +27,7 @@ import { logStore } from '~/lib/stores/logs';
 import { streamingState } from '~/lib/stores/streaming';
 import { filesToArtifacts } from '~/utils/fileUtils';
 import { supabaseConnection } from '~/lib/stores/supabase';
+import type { DataStreamError } from '~/types/context';
 import { defaultDesignScheme, type DesignScheme } from '~/types/design-scheme';
 import type { ElementInfo } from '~/components/workbench/Inspector';
 
@@ -146,8 +147,13 @@ export const ChatImpl = memo(
     const { showChat } = useStore(chatStore);
     const [animationScope, animate] = useAnimate();
     const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
+
+    // Keep track of the errors we alerted on. useChat gets the same data twice even if they're removed with setData
+    const alertedErrorIds = useRef(new Set());
+
     const [chatMode, setChatMode] = useState<'discuss' | 'build'>('build');
     const [selectedElement, setSelectedElement] = useState<ElementInfo | null>(null);
+
     const {
       messages,
       isLoading,
@@ -193,7 +199,10 @@ export const ChatImpl = memo(
       },
       onFinish: (message, response) => {
         const usage = response.usage;
-        setData(undefined);
+        setData(() => {
+          alertedErrorIds.current.clear();
+          return undefined;
+        });
 
         if (usage) {
           console.log('Token usage:', usage);
@@ -231,6 +240,21 @@ export const ChatImpl = memo(
         });
       }
     }, [model, provider, searchParams]);
+
+    useEffect(() => {
+      if (chatData) {
+        for (const data of chatData) {
+          if (data && typeof data === 'object' && 'type' in data && data.type === 'error') {
+            const error = data as DataStreamError;
+
+            if (!alertedErrorIds.current.has(error.id)) {
+              toast.error('There was an error processing your request: ' + error.message);
+              alertedErrorIds.current.add(error.id);
+            }
+          }
+        }
+      }
+    }, [chatData]);
 
     const { enhancingPrompt, promptEnhanced, enhancePrompt, resetEnhancer } = usePromptEnhancer();
     const { parsedMessages, parseMessages } = useMessageParser();
